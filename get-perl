@@ -1,0 +1,10 @@
+#!/bin/sh
+
+for branch in `cat test-branches`; do
+  echo $branch
+  cd /tmp/perl-export;
+  git reset --hard `git rev-parse $branch`
+  git clean -ffdx
+  echo -n "$branch: "
+  perl Porting/make_dot_patch.pl
+done
