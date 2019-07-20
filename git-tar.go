@@ -3,8 +3,10 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -34,21 +36,24 @@ type GitTar struct {
 // exist it will be cloned from RepoURL.
 func (gt *GitTar) Setup() error {
 	if _, err := os.Stat(gt.Directory); err == nil {
-		log.Printf("Opening existing clone")
-		_, err := git.PlainOpen(gt.Directory)
-		if err != nil {
-			return fmt.Errorf("could not open %q: %s", gt.Directory, err)
+		if _, err := os.Stat(filepath.Join(gt.Directory, "HEAD")); err == nil {
+			log.Printf("Opening existing clone")
+			_, err := git.PlainOpen(gt.Directory)
+			if err != nil {
+				return fmt.Errorf("could not open %q: %s", gt.Directory, err)
+			}
+			return nil
 		}
-	} else {
-		_, err := git.PlainClone(gt.Directory, true, &git.CloneOptions{
-			URL:               gt.RepoURL,
-			Progress:          os.Stdout,
-			NoCheckout:        true,
-			RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
-		})
-		if err != nil {
-			return fmt.Errorf("could not clone %q to %q: %s", gt.RepoURL, gt.Directory, err)
-		}
+	}
+
+	_, err := git.PlainClone(gt.Directory, true, &git.CloneOptions{
+		URL:               gt.RepoURL,
+		Progress:          os.Stdout,
+		NoCheckout:        true,
+		RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
+	})
+	if err != nil {
+		return fmt.Errorf("could not clone %q to %q: %s", gt.RepoURL, gt.Directory, err)
 	}
 
 	log.Printf("has git repo!")
@@ -94,9 +99,27 @@ func (gt *GitTar) Load() (*git.Repository, error) {
 
 func main() {
 
+	repo := flag.String("repo", "", "URL to git repository")
+	directory := flag.String("directory", "", "directory for bare git clone")
+	flag.Parse()
+
+	if len(*repo) == 0 {
+		log.Fatalf("-repo parameter required")
+	}
+
+	if len(*directory) == 0 {
+		var err error
+		*directory, err = ioutil.TempDir("", "git-tar-")
+		if err != nil {
+			log.Fatalf("could not get tempdir (use -directory parameter to set): %s", err)
+		}
+		defer os.RemoveAll(*directory)
+		log.Printf("cloning to %q (will be cleaned up)", *directory)
+	}
+
 	gt := GitTar{
-		RepoURL:   "git://perl5.git.perl.org/perl.git",
-		Directory: "/tmp/perl",
+		RepoURL:   *repo,
+		Directory: *directory,
 	}
 	err := gt.Setup()
 	if err != nil {
