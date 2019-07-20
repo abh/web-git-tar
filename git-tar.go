@@ -24,11 +24,14 @@ import (
 	// "gopkg.in/src-d/go-git.v4/storage/filesystem/dotgit"
 )
 
+// GitTar sets up a repository and clones instances of it
 type GitTar struct {
 	RepoURL   string
 	Directory string
 }
 
+// Setup load the git repository in GitTar.Directory. If it doesn't
+// exist it will be cloned from RepoURL.
 func (gt *GitTar) Setup() error {
 	if _, err := os.Stat(gt.Directory); err == nil {
 		log.Printf("Opening existing clone")
@@ -52,6 +55,7 @@ func (gt *GitTar) Setup() error {
 	return nil
 }
 
+// Update fetches updates from the git RepoURL
 func (gt *GitTar) Update() error {
 	r, err := gt.Load()
 	if err != nil {
@@ -75,6 +79,7 @@ func (gt *GitTar) Update() error {
 	return nil
 }
 
+// Load returns a git.Repository object with a new (memory based) work path
 func (gt *GitTar) Load() (*git.Repository, error) {
 	fs := osfs.New(gt.Directory)
 	workFS := memfs.New()
@@ -100,38 +105,21 @@ func main() {
 
 	r, err := gt.Load()
 
+	w, err := r.Worktree()
+	if err != nil {
+		log.Printf("could not get work tree: %s", err)
+	}
+
 	headRef, err := r.Head()
 	if err != nil {
 		log.Fatalf("head err: %s", err)
 	}
+
 	commit, err := r.CommitObject(headRef.Hash())
 	if err != nil {
 		log.Fatalf("could not get commit %s: %s", headRef.Hash(), err)
 	}
 	fmt.Printf("head commit: %s", commit.String())
-
-	// local branches
-	branches, err := r.Branches()
-	if err != nil {
-		log.Fatalf("could not get branches from %q (%q)", gt.RepoURL, gt.Directory)
-	}
-
-	for {
-		branch, err := branches.Next()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			log.Fatalf("branch read error: %s", err)
-		}
-		log.Printf("branch: %q", branch.Name().String())
-		log.Printf("branch data: %+v", branch)
-	}
-
-	w, err := r.Worktree()
-	if err != nil {
-		log.Printf("could not get work tree: %s", err)
-	}
 
 	log.Printf("git checkout %s to %s", commit.ID().String(), w.Filesystem.Root())
 	err = w.Checkout(&git.CheckoutOptions{
@@ -284,7 +272,7 @@ func (gt *GitTar) getSHA1(id string) (string, error) {
 	var ferr error
 	for _, target := range []string{"remotes/origin/" + id, id} {
 
-		bsha1, err := gt.runGit("/tmp/perl", []string{"rev-parse", "--verify", target})
+		bsha1, err := gt.runGit([]string{"rev-parse", "--verify", target})
 		if err != nil {
 			ferr = err
 			continue
@@ -294,6 +282,7 @@ func (gt *GitTar) getSHA1(id string) (string, error) {
 	return "", ferr
 }
 
+// GetPatchLine returns a line of text in the perl5 .patch format
 func (gt *GitTar) GetPatchLine(r *git.Repository, id string) (string, error) {
 
 	sha1, err := gt.getSHA1(id)
@@ -324,7 +313,7 @@ func (gt *GitTar) GetPatchLine(r *git.Repository, id string) (string, error) {
 	for _, name := range branchCandidates {
 		refs := "remotes/origin/" + name
 
-		bbranch, err := gt.runGit("/tmp/perl", []string{"name-rev", "--name-only", "--refs=" + refs, sha1})
+		bbranch, err := gt.runGit([]string{"name-rev", "--name-only", "--refs=" + refs, sha1})
 		if err != nil {
 			return "", err
 		}
@@ -350,7 +339,7 @@ func (gt *GitTar) GetPatchLine(r *git.Repository, id string) (string, error) {
 		}
 	}
 
-	describeb, err := gt.runGit("/tmp/perl", []string{"describe", sha1})
+	describeb, err := gt.runGit([]string{"describe", sha1})
 	if err != nil {
 		return "", err
 	}
@@ -369,11 +358,18 @@ func (gt *GitTar) GetPatchLine(r *git.Repository, id string) (string, error) {
 	return pl, nil
 }
 
-func (gt *GitTar) runGit(dir string, args []string) ([]byte, error) {
+func (gt *GitTar) runGit(args []string) ([]byte, error) {
 	cmdName := "git"
 	cmdArgs := args
 
-	err := os.Chdir(dir)
+	// cwd, err := os.Getwd()
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	// this might not be goroutine safe at all, but our use case
+	// just has one git dir, so no point in cahnging back.
+	err := os.Chdir(gt.Directory)
 	if err != nil {
 		return nil, err
 	}
@@ -383,8 +379,11 @@ func (gt *GitTar) runGit(dir string, args []string) ([]byte, error) {
 		return nil, fmt.Errorf("error running git %s command: %s (%s)", args, err, cmdOut)
 	}
 	cmdOut = bytes.TrimSpace(cmdOut)
+
+	// err = os.Chdir(cwd)
+	// if err != nil {
+	// 	return nil, err
+	// }
+
 	return cmdOut, nil
-	// sha := string(cmdOut)
-	// firstSix := sha[:6]
-	// fmt.Println("The first six chars of the SHA at HEAD in this repo are", firstSix)
 }
